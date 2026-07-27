@@ -80,8 +80,8 @@ def conectar_google():
 def configurar_ia():
     try:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        # O modelo foi atualizado pelo Google. Agora usamos a versão 2.5
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        # CORREÇÃO: Utilizando o modelo Geração 3 atualizado
+        model = genai.GenerativeModel('gemini-3-flash')
         return model
     except Exception as e:
         st.error("🚨 Erro de conexão com a Inteligência Artificial.")
@@ -245,11 +245,16 @@ with abas[1]:
                     if texto_resposta.startswith("APROVADO"):
                         st.success("✅ A Inteligência Artificial aprovou a nota fiscal!")
                         
-                        # SALVA NA PLANILHA
+                        # SALVA NA PLANILHA (ENVIANDO EXATAMENTE OS 7 DADOS E FORMATANDO COMO FLOAT MATEMÁTICO)
                         obs = obs_gasto if obs_gasto.strip() else "-"
                         linha = [
-                            data_gasto.strftime("%d/%m/%Y"), mot_gasto, vei_gasto, 
-                            "Saída (Gasto)", tipo_gasto, float(valor_gasto), obs
+                            data_gasto.strftime("%d/%m/%Y"), 
+                            mot_gasto, 
+                            vei_gasto, 
+                            "Saída (Gasto)", 
+                            tipo_gasto, 
+                            float(valor_gasto), # Isso impede o bug do "150 virar 1500" no Sheets
+                            obs
                         ]
                         aba_financeiro.append_row(linha)
                         st.session_state["sucesso"] = True
@@ -264,6 +269,7 @@ with abas[1]:
 # ------------------------------------------
 # ABA 3: SALDOS E ADIANTAMENTOS
 # ------------------------------------------
+# Blindagem contra espaços extras na planilha
 def blindagem_moeda(valor):
     if isinstance(valor, (int, float)): return float(valor)
     v = str(valor).upper().replace('R$', '').strip()
@@ -278,9 +284,11 @@ with abas[2]:
         dados_fin = aba_financeiro.get_all_records()
         df_fin = pd.DataFrame(dados_fin)
     
+    # Limpeza dos nomes das colunas (tira espaços extras que possam existir na planilha)
     if not df_fin.empty:
         df_fin.columns = df_fin.columns.str.strip()
     
+    # Prepara os valores para o cálculo
     if not df_fin.empty and 'Valor (R$)' in df_fin.columns:
         df_fin['Valor (R$)'] = df_fin['Valor (R$)'].apply(blindagem_moeda)
         
@@ -299,8 +307,13 @@ with abas[2]:
             else:
                 with st.spinner("Registrando envio..."):
                     linha = [
-                        data_ad.strftime("%d/%m/%Y"), mot_ad, "-", 
-                        "Entrada (Adiantamento)", "PIX da Empresa", float(valor_ad), "Adiantamento"
+                        data_ad.strftime("%d/%m/%Y"), 
+                        mot_ad, 
+                        "-", 
+                        "Entrada (Adiantamento)", 
+                        "PIX da Empresa", 
+                        float(valor_ad), 
+                        "Adiantamento"
                     ]
                     aba_financeiro.append_row(linha)
                     st.session_state["sucesso"] = True
@@ -309,12 +322,14 @@ with abas[2]:
         st.divider()
         st.markdown("### 📊 Visão Geral de Saldos (Toda a Equipe)")
         
+        # Proteção extra: verifica se a planilha está vazia
         if not df_fin.empty and 'Motorista' in df_fin.columns:
             resumo = []
             for motorista in df_fin['Motorista'].unique():
                 if str(motorista).strip() == "": continue
                 df_mot = df_fin[df_fin['Motorista'] == motorista]
                 
+                # Somente soma se a coluna existir
                 if 'Tipo Movimento' in df_fin.columns:
                     entradas = df_mot[df_mot['Tipo Movimento'].str.strip() == 'Entrada (Adiantamento)']['Valor (R$)'].sum()
                     saidas = df_mot[df_mot['Tipo Movimento'].str.strip() == 'Saída (Gasto)']['Valor (R$)'].sum()
