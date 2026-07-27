@@ -80,8 +80,8 @@ def conectar_google():
 def configurar_ia():
     try:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        # Usamos o modelo flash porque é rápido para ler imagens
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # O modelo foi atualizado pelo Google. Agora usamos a versão 2.5
+        model = genai.GenerativeModel('gemini-2.5-flash')
         return model
     except Exception as e:
         st.error("🚨 Erro de conexão com a Inteligência Artificial.")
