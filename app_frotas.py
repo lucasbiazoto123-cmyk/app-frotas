@@ -5,6 +5,8 @@ import json
 import gspread
 from google.oauth2.service_account import Credentials
 import traceback
+import google.generativeai as genai
+from PIL import Image
 
 # Configuração da Página
 st.set_page_config(page_title="Gestão de Frotas - ITON", page_icon="🚗", layout="centered")
@@ -49,8 +51,9 @@ if not check_password():
     st.stop()
 
 # ==========================================
-# 2. CONEXÃO COM O GOOGLE SHEETS
+# 2. CONEXÕES (GOOGLE SHEETS E IA)
 # ==========================================
+# Conexão com o Google Sheets
 def conectar_google():
     try:
         credenciais_dict = json.loads(st.secrets["google_credentials"])
@@ -73,7 +76,19 @@ def conectar_google():
         st.code(traceback.format_exc(), language="python")
         st.stop()
 
+# Conexão com a Inteligência Artificial
+def configurar_ia():
+    try:
+        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+        # Usamos o modelo flash porque é rápido para ler imagens
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        return model
+    except Exception as e:
+        st.error("🚨 Erro de conexão com a Inteligência Artificial.")
+        return None
+
 aba_diario, aba_financeiro = conectar_google()
+modelo_ia = configurar_ia()
 
 # ==========================================
 # LISTAS BASE
@@ -150,7 +165,7 @@ with abas[0]:
     with col_i2:
         pneus = st.radio("🛞 Pneu murcho/danificado?", ["Não, estão OK", "Sim, avariado"])
         
-    foto_painel = st.file_uploader("📸 Anexar Foto do Painel (KM)", type=['png', 'jpg', 'jpeg'], key="foto_chk")
+    foto_painel = st.file_uploader("📸 Foto do Painel (Obrigatório)", type=['png', 'jpg', 'jpeg'], key="foto_chk")
     obs_chk = st.text_area("📝 Observações (Ex: Bateram no carro):", placeholder="Opcional...")
     
     if st.button("✅ Enviar Vistoria", type="primary", use_container_width=True):
@@ -161,7 +176,7 @@ with abas[0]:
         elif km_atual == 0:
             st.warning("⚠️ Informe a Quilometragem (KM).")
         elif not foto_painel:
-            st.warning("⚠️ A foto do painel é obrigatória para liberar o carro.")
+            st.warning("⚠️ Você precisa anexar a foto do painel mostrando o KM.")
         else:
             with st.spinner("Salvando..."):
                 data_hora = datetime.now().strftime("%d/%m/%Y %H:%M")
@@ -171,7 +186,7 @@ with abas[0]:
                 st.rerun()
 
 # ------------------------------------------
-# ABA 2: REGISTRAR GASTO
+# ABA 2: REGISTRAR GASTO (COM IA)
 # ------------------------------------------
 with abas[1]:
     st.markdown("**Lançamento de Despesas do Veículo**")
@@ -186,9 +201,7 @@ with abas[1]:
         
     valor_gasto = st.number_input("💰 Valor Total Gasto (R$):", min_value=0.0, step=10.0, format="%.2f")
     
-    foto_nota = st.file_uploader("📸 Anexar Foto da Nota", type=['png', 'jpg', 'jpeg'], key="foto_nota")
-    if foto_nota:
-        st.info("🤖 Em breve: A Inteligência Artificial lerá esta nota automaticamente!")
+    foto_nota = st.file_uploader("📸 Foto da Nota Fiscal (Obrigatório para a IA analisar)", type=['png', 'jpg', 'jpeg'], key="foto_nota")
 
     obs_gasto = st.text_area("📝 Observações (Nome do posto, etc):", placeholder="Opcional...")
     
@@ -196,28 +209,62 @@ with abas[1]:
         if mot_gasto == "Selecione...":
             st.warning("⚠️ Selecione quem gastou o dinheiro.")
         elif vei_gasto == "Selecione...":
-            st.warning("⚠️ Selecione o veículo abastecido.")
+            st.warning("⚠️ Selecione o veículo.")
         elif valor_gasto <= 0:
             st.warning("⚠️ O valor gasto deve ser maior que zero.")
         elif not foto_nota:
-            st.warning("⚠️ Você precisa anexar a foto da Nota Fiscal/Recibo para comprovar o gasto.")
+            st.warning("⚠️ A foto da nota fiscal é OBRIGATÓRIA.")
         else:
-            with st.spinner("Salvando gasto..."):
-                obs = obs_gasto if obs_gasto.strip() else "-"
-                # MUDANÇA CRÍTICA: valor_gasto agora é enviado como NÚMERO, não como texto
-                linha = [
-                    data_gasto.strftime("%d/%m/%Y"), mot_gasto, vei_gasto, 
-                    "Saída (Gasto)", tipo_gasto, float(valor_gasto), obs
-                ]
-                aba_financeiro.append_row(linha)
-                st.session_state["sucesso"] = True
-                st.rerun()
+            # PROCESSO DA INTELIGÊNCIA ARTIFICIAL
+            with st.spinner("🤖 A IA está lendo sua nota, aguarde..."):
+                try:
+                    # 1. Abre a imagem
+                    imagem_aberta = Image.open(foto_nota)
+                    
+                    # 2. Cria o comando (prompt) para a IA
+                    comando_ia = f"""
+                    Você é um auditor financeiro. Analise a imagem desta nota fiscal ou recibo.
+                    O funcionário declarou no sistema que o valor TOTAL gasto foi de R$ {valor_gasto:.2f}.
+                    Sua tarefa é ler a nota fiscal e verificar se o valor total legível nela corresponde a este valor declarado.
+                    
+                    Responda estritamente neste formato:
+                    [STATUS] - [JUSTIFICATIVA]
+                    
+                    Onde [STATUS] deve ser EXATAMENTE 'APROVADO' (se os valores baterem) ou 'RECUSADO' (se não baterem ou não der para ler).
+                    
+                    Exemplo 1: APROVADO - O valor total da nota fiscal legível é R$ {valor_gasto:.2f}.
+                    Exemplo 2: RECUSADO - O valor total da nota é R$ 100,00, mas o usuário digitou R$ 150,00.
+                    Exemplo 3: RECUSADO - A imagem está muito borrada e não consigo identificar nenhum valor.
+                    """
+                    
+                    # 3. Manda para o modelo
+                    resposta_ia = modelo_ia.generate_content([comando_ia, imagem_aberta])
+                    texto_resposta = resposta_ia.text.strip()
+                    
+                    # 4. Avalia a resposta
+                    if texto_resposta.startswith("APROVADO"):
+                        st.success("✅ A Inteligência Artificial aprovou a nota fiscal!")
+                        
+                        # SALVA NA PLANILHA
+                        obs = obs_gasto if obs_gasto.strip() else "-"
+                        linha = [
+                            data_gasto.strftime("%d/%m/%Y"), mot_gasto, vei_gasto, 
+                            "Saída (Gasto)", tipo_gasto, float(valor_gasto), obs
+                        ]
+                        aba_financeiro.append_row(linha)
+                        st.session_state["sucesso"] = True
+                        st.rerun()
+                    else:
+                        st.error("🚨 A Inteligência Artificial RECUSOU este lançamento.")
+                        st.warning(f"**Motivo:** {texto_resposta}")
+                        
+                except Exception as e:
+                    st.error(f"Erro ao processar com a IA: {e}")
 
 # ------------------------------------------
 # ABA 3: SALDOS E ADIANTAMENTOS
 # ------------------------------------------
 def blindagem_moeda(valor):
-    # Função para limpar qualquer sujeira que o Google Sheets mande de volta
     if isinstance(valor, (int, float)): return float(valor)
     v = str(valor).upper().replace('R$', '').strip()
     if not v: return 0.0
@@ -231,11 +278,9 @@ with abas[2]:
         dados_fin = aba_financeiro.get_all_records()
         df_fin = pd.DataFrame(dados_fin)
     
-    # 🛡️ ARMADURA ANTIESPAÇO
     if not df_fin.empty:
         df_fin.columns = df_fin.columns.str.strip()
     
-    # 🛡️ LIMPEZA DE MOEDA BLINDADA
     if not df_fin.empty and 'Valor (R$)' in df_fin.columns:
         df_fin['Valor (R$)'] = df_fin['Valor (R$)'].apply(blindagem_moeda)
         
@@ -253,7 +298,6 @@ with abas[2]:
             elif valor_ad <= 0: st.error("Valor inválido.")
             else:
                 with st.spinner("Registrando envio..."):
-                    # MUDANÇA CRÍTICA: valor_ad agora é enviado como NÚMERO
                     linha = [
                         data_ad.strftime("%d/%m/%Y"), mot_ad, "-", 
                         "Entrada (Adiantamento)", "PIX da Empresa", float(valor_ad), "Adiantamento"
@@ -269,7 +313,6 @@ with abas[2]:
             resumo = []
             for motorista in df_fin['Motorista'].unique():
                 if str(motorista).strip() == "": continue
-                
                 df_mot = df_fin[df_fin['Motorista'] == motorista]
                 
                 if 'Tipo Movimento' in df_fin.columns:
@@ -315,11 +358,8 @@ with abas[2]:
                 
                 if not df_meu.empty:
                      colunas_para_mostrar = [col for col in ['Data', 'Tipo Movimento', 'Valor (R$)'] if col in df_meu.columns]
-                     
-                     # Formata os valores do extrato para não ficarem feios na tela
                      df_extrato = df_meu[colunas_para_mostrar].copy()
                      df_extrato['Valor (R$)'] = df_extrato['Valor (R$)'].apply(lambda x: f"R$ {float(x):.2f}".replace('.', ','))
-                     
                      st.dataframe(df_extrato, use_container_width=True)
                 else:
                      st.info("Nenhum extrato para exibir.")
