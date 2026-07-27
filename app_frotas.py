@@ -80,11 +80,11 @@ def conectar_google():
 def configurar_ia():
     try:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        # RETORNANDO PARA A VERSÃO 1.5 PARA GARANTIR COMPATIBILIDADE COM A V1BETA
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # ATUALIZADO PARA O MODELO VIGENTE SUPORTADO PELA BIBLIOTECA
+        model = genai.GenerativeModel('gemini-3.5-flash')
         return model
     except Exception as e:
-        st.error("🚨 Erro de conexão com a Inteligência Artificial.")
+        st.error("🚨 Erro de configuração da IA. Verifique sua chave API.")
         return None
 
 aba_diario, aba_financeiro = conectar_google()
@@ -215,10 +215,14 @@ with abas[1]:
         elif not foto_nota:
             st.warning("⚠️ A foto da nota fiscal é OBRIGATÓRIA.")
         else:
+            if modelo_ia is None:
+                st.error("A Inteligência Artificial não está configurada corretamente.")
+                st.stop()
+                
             # PROCESSO DA INTELIGÊNCIA ARTIFICIAL
             with st.spinner("🤖 A IA está lendo sua nota, aguarde..."):
                 try:
-                    # 1. Abre a imagem
+                    # 1. Abre a imagem usando o PIL
                     imagem_aberta = Image.open(foto_nota)
                     
                     # 2. Cria o comando (prompt) para a IA
@@ -253,7 +257,7 @@ with abas[1]:
                             vei_gasto, 
                             "Saída (Gasto)", 
                             tipo_gasto, 
-                            float(valor_gasto), # Isso impede o bug do "150 virar 1500" no Sheets
+                            float(valor_gasto), 
                             obs
                         ]
                         aba_financeiro.append_row(linha)
@@ -264,7 +268,8 @@ with abas[1]:
                         st.warning(f"**Motivo:** {texto_resposta}")
                         
                 except Exception as e:
-                    st.error(f"Erro ao processar com a IA: {e}")
+                    st.error("🚨 Erro ao processar com a IA. A API pode estar indisponível ou o formato da imagem não é suportado.")
+                    st.code(str(e))
 
 # ------------------------------------------
 # ABA 3: SALDOS E ADIANTAMENTOS
