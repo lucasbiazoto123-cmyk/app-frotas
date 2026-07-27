@@ -65,8 +65,8 @@ def conectar_google():
         LINK_DA_PLANILHA = "https://docs.google.com/spreadsheets/d/1oI9pPGXngdE1jrOaQGIRhHMfLnt_Evh9tN_9lQkLaOU/edit?gid=1342849862#gid=1342849862"
         documento = client.open_by_url(LINK_DA_PLANILHA)
         
-        aba_diario = documento.worksheet("DIARIO")
-        aba_financeiro = documento.worksheet("FINANCEIRO")
+        aba_diario = documento.worksheet("DIARIO_FROTA")
+        aba_financeiro = documento.worksheet("FINANCEIRO_FROTA")
         
         return aba_diario, aba_financeiro
     except Exception as e:
