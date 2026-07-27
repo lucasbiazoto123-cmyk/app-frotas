@@ -213,12 +213,12 @@ with abas[1]:
 with abas[2]:
     # Lógica para buscar e calcular saldos
     with st.spinner("Calculando saldos da planilha..."):
+        # Traz tudo da planilha como um DataFrame do Pandas
         dados_fin = aba_financeiro.get_all_records()
         df_fin = pd.DataFrame(dados_fin)
     
-    # Se houver dados, converte valores para número
-    if not df_fin.empty:
-        # Pega a coluna pelo nome correto
+    # Limpeza dos dados: garante que a coluna Valor seja um número (float)
+    if not df_fin.empty and 'Valor (R$)' in df_fin.columns:
         df_fin['Valor (R$)'] = df_fin['Valor (R$)'].astype(str).str.replace(',', '.').astype(float)
         
     if is_admin:
@@ -252,7 +252,7 @@ with abas[2]:
                 entradas = df_mot[df_mot['Tipo Movimento'] == 'Entrada (Adiantamento)']['Valor (R$)'].sum()
                 saidas = df_mot[df_mot['Tipo Movimento'] == 'Saída (Gasto)']['Valor (R$)'].sum()
                 saldo = entradas - saidas
-                if saldo != 0: # Mostra só quem tem dinheiro em mãos ou quem tirou do bolso
+                if saldo != 0: 
                     resumo.append({"Motorista": motorista, "Saldo Atual": f"R$ {saldo:.2f}"})
             
             if resumo:
@@ -266,7 +266,6 @@ with abas[2]:
             st.info("Você ainda não tem movimentações.")
         else:
             nome_usuario = st.session_state["nome_usuario"]
-            # Encontra o nome exato na lista pelo primeiro nome
             nome_completo = next((nome for nome in LISTA_COLABORADORES if nome.split()[0].lower() == st.session_state["usuario_atual"]), None)
             
             if nome_completo:
