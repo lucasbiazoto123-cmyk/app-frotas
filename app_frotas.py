@@ -61,7 +61,6 @@ def conectar_google():
         creds = Credentials.from_service_account_info(credenciais_dict, scopes=scopes)
         client = gspread.authorize(creds)
         
-        # Link da planilha MESTRE
         LINK_DA_PLANILHA = "https://docs.google.com/spreadsheets/d/1oI9pPGXngdE1jrOaQGIRhHMfLnt_Evh9tN_9lQkLaOU/edit?gid=1342849862#gid=1342849862"
         documento = client.open_by_url(LINK_DA_PLANILHA)
         
@@ -97,7 +96,6 @@ LISTA_COLABORADORES = [
 ]
 LISTA_COLABORADORES.sort()
 
-# Gerenciamento de Estado
 if "sucesso" not in st.session_state: st.session_state["sucesso"] = False
 
 # ==========================================
@@ -133,7 +131,7 @@ else:
     abas = st.tabs(["📋 Checklist", "💸 Registrar Gasto", "💰 Meu Saldo"])
 
 # ------------------------------------------
-# ABA 1: CHECKLIST DIÁRIO (VISTORIA)
+# ABA 1: CHECKLIST DIÁRIO
 # ------------------------------------------
 with abas[0]:
     st.markdown("**Vistoria Rápida (Antes de sair com o carro)**")
@@ -168,12 +166,11 @@ with abas[0]:
                 st.rerun()
 
 # ------------------------------------------
-# ABA 2: REGISTRAR GASTO (MOTORISTA)
+# ABA 2: REGISTRAR GASTO
 # ------------------------------------------
 with abas[1]:
     st.markdown("**Lançamento de Despesas do Veículo**")
     
-    # Motorista seleciona seus dados
     col_g1, col_g2 = st.columns(2)
     with col_g1:
         data_gasto = st.date_input("📅 Data do Gasto:")
@@ -184,8 +181,7 @@ with abas[1]:
         
     valor_gasto = st.number_input("💰 Valor Total Gasto (R$):", min_value=0.0, step=10.0, format="%.2f")
     
-    # Placeholder para a futura IA
-    foto_nota = st.file_uploader("📸 Anexar Foto da Nota (Para conferência futura da IA)", type=['png', 'jpg', 'jpeg'])
+    foto_nota = st.file_uploader("📸 Anexar Foto da Nota", type=['png', 'jpg', 'jpeg'])
     if foto_nota:
         st.info("🤖 Em breve: A Inteligência Artificial lerá esta nota automaticamente!")
 
@@ -211,13 +207,15 @@ with abas[1]:
 # ABA 3: SALDOS E ADIANTAMENTOS
 # ------------------------------------------
 with abas[2]:
-    # Lógica para buscar e calcular saldos
     with st.spinner("Calculando saldos da planilha..."):
-        # Traz tudo da planilha como um DataFrame do Pandas
         dados_fin = aba_financeiro.get_all_records()
         df_fin = pd.DataFrame(dados_fin)
     
-    # Limpeza dos dados: garante que a coluna Valor seja um número (float)
+    # 🛡️ ARMADURA ANTIESPAÇO: Remove espaços invisíveis dos nomes das colunas
+    if not df_fin.empty:
+        df_fin.columns = df_fin.columns.str.strip()
+    
+    # Limpeza dos dados de valor
     if not df_fin.empty and 'Valor (R$)' in df_fin.columns:
         df_fin['Valor (R$)'] = df_fin['Valor (R$)'].astype(str).str.replace(',', '.').astype(float)
         
@@ -246,16 +244,18 @@ with abas[2]:
         st.divider()
         st.markdown("### 📊 Visão Geral de Saldos (Toda a Equipe)")
         
-        # Correção aqui: A proteção 'Motorista' in df_fin.columns impede que o sistema quebre se a planilha estiver vazia.
         if not df_fin.empty and 'Motorista' in df_fin.columns:
             resumo = []
             for motorista in df_fin['Motorista'].unique():
+                # Ignora linhas em branco
+                if str(motorista).strip() == "": continue
+                
                 df_mot = df_fin[df_fin['Motorista'] == motorista]
                 
-                # Proteção extra para não quebrar se a coluna 'Tipo Movimento' ainda não existir
                 if 'Tipo Movimento' in df_fin.columns:
-                    entradas = df_mot[df_mot['Tipo Movimento'] == 'Entrada (Adiantamento)']['Valor (R$)'].sum()
-                    saidas = df_mot[df_mot['Tipo Movimento'] == 'Saída (Gasto)']['Valor (R$)'].sum()
+                    # Somente Entradas exatas e Saídas exatas
+                    entradas = df_mot[df_mot['Tipo Movimento'].str.strip() == 'Entrada (Adiantamento)']['Valor (R$)'].sum()
+                    saidas = df_mot[df_mot['Tipo Movimento'].str.strip() == 'Saída (Gasto)']['Valor (R$)'].sum()
                 else:
                     entradas, saidas = 0, 0
                     
@@ -275,15 +275,15 @@ with abas[2]:
         if df_fin.empty or 'Motorista' not in df_fin.columns:
             st.info("Você ainda não tem movimentações registradas.")
         else:
-            nome_usuario = st.session_state["nome_usuario"]
+            # Encontra o nome completo dele para bater com a planilha
             nome_completo = next((nome for nome in LISTA_COLABORADORES if nome.split()[0].lower() == st.session_state["usuario_atual"]), None)
             
             if nome_completo:
                 df_meu = df_fin[df_fin['Motorista'] == nome_completo]
                 
                 if 'Tipo Movimento' in df_fin.columns:
-                    minhas_entradas = df_meu[df_meu['Tipo Movimento'] == 'Entrada (Adiantamento)']['Valor (R$)'].sum()
-                    minhas_saidas = df_meu[df_meu['Tipo Movimento'] == 'Saída (Gasto)']['Valor (R$)'].sum()
+                    minhas_entradas = df_meu[df_meu['Tipo Movimento'].str.strip() == 'Entrada (Adiantamento)']['Valor (R$)'].sum()
+                    minhas_saidas = df_meu[df_meu['Tipo Movimento'].str.strip() == 'Saída (Gasto)']['Valor (R$)'].sum()
                 else:
                     minhas_entradas, minhas_saidas = 0, 0
                     
@@ -296,7 +296,6 @@ with abas[2]:
                 st.write("**Meu Extrato:**")
                 
                 if not df_meu.empty:
-                     # Se houver dados, mostra a tabelinha do motorista
                      colunas_para_mostrar = [col for col in ['Data', 'Tipo Movimento', 'Valor (R$)'] if col in df_meu.columns]
                      st.dataframe(df_meu[colunas_para_mostrar], use_container_width=True)
                 else:
