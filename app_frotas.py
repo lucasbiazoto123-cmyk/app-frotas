@@ -150,13 +150,18 @@ with abas[0]:
     with col_i2:
         pneus = st.radio("🛞 Pneu murcho/danificado?", ["Não, estão OK", "Sim, avariado"])
         
+    foto_painel = st.file_uploader("📸 Anexar Foto do Painel (KM)", type=['png', 'jpg', 'jpeg'], key="foto_chk")
     obs_chk = st.text_area("📝 Observações (Ex: Bateram no carro):", placeholder="Opcional...")
     
     if st.button("✅ Enviar Vistoria", type="primary", use_container_width=True):
-        if mot_chk == "Selecione..." or vei_chk == "Selecione...":
-            st.error("Selecione motorista e veículo.")
+        if mot_chk == "Selecione...":
+            st.warning("⚠️ Selecione o Motorista.")
+        elif vei_chk == "Selecione...":
+            st.warning("⚠️ Selecione o Veículo.")
         elif km_atual == 0:
-            st.error("Informe o KM.")
+            st.warning("⚠️ Informe a Quilometragem (KM).")
+        elif not foto_painel:
+            st.warning("⚠️ A foto do painel é obrigatória para liberar o carro.")
         else:
             with st.spinner("Salvando..."):
                 data_hora = datetime.now().strftime("%d/%m/%Y %H:%M")
@@ -181,17 +186,21 @@ with abas[1]:
         
     valor_gasto = st.number_input("💰 Valor Total Gasto (R$):", min_value=0.0, step=10.0, format="%.2f")
     
-    foto_nota = st.file_uploader("📸 Anexar Foto da Nota", type=['png', 'jpg', 'jpeg'])
+    foto_nota = st.file_uploader("📸 Anexar Foto da Nota", type=['png', 'jpg', 'jpeg'], key="foto_nota")
     if foto_nota:
         st.info("🤖 Em breve: A Inteligência Artificial lerá esta nota automaticamente!")
 
     obs_gasto = st.text_area("📝 Observações (Nome do posto, etc):", placeholder="Opcional...")
     
     if st.button("✅ Salvar Despesa", type="primary", use_container_width=True):
-        if mot_gasto == "Selecione..." or vei_gasto == "Selecione...":
-            st.error("Selecione motorista e veículo.")
+        if mot_gasto == "Selecione...":
+            st.warning("⚠️ Selecione quem gastou o dinheiro.")
+        elif vei_gasto == "Selecione...":
+            st.warning("⚠️ Selecione o veículo abastecido.")
         elif valor_gasto <= 0:
-            st.error("O valor deve ser maior que zero.")
+            st.warning("⚠️ O valor gasto deve ser maior que zero.")
+        elif not foto_nota:
+            st.warning("⚠️ Você precisa anexar a foto da Nota Fiscal/Recibo para comprovar o gasto.")
         else:
             with st.spinner("Salvando gasto..."):
                 obs = obs_gasto if obs_gasto.strip() else "-"
