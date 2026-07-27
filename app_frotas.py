@@ -245,12 +245,20 @@ with abas[2]:
                     
         st.divider()
         st.markdown("### 📊 Visão Geral de Saldos (Toda a Equipe)")
-        if not df_fin.empty:
+        
+        # Correção aqui: A proteção 'Motorista' in df_fin.columns impede que o sistema quebre se a planilha estiver vazia.
+        if not df_fin.empty and 'Motorista' in df_fin.columns:
             resumo = []
             for motorista in df_fin['Motorista'].unique():
                 df_mot = df_fin[df_fin['Motorista'] == motorista]
-                entradas = df_mot[df_mot['Tipo Movimento'] == 'Entrada (Adiantamento)']['Valor (R$)'].sum()
-                saidas = df_mot[df_mot['Tipo Movimento'] == 'Saída (Gasto)']['Valor (R$)'].sum()
+                
+                # Proteção extra para não quebrar se a coluna 'Tipo Movimento' ainda não existir
+                if 'Tipo Movimento' in df_fin.columns:
+                    entradas = df_mot[df_mot['Tipo Movimento'] == 'Entrada (Adiantamento)']['Valor (R$)'].sum()
+                    saidas = df_mot[df_mot['Tipo Movimento'] == 'Saída (Gasto)']['Valor (R$)'].sum()
+                else:
+                    entradas, saidas = 0, 0
+                    
                 saldo = entradas - saidas
                 if saldo != 0: 
                     resumo.append({"Motorista": motorista, "Saldo Atual": f"R$ {saldo:.2f}"})
@@ -258,20 +266,27 @@ with abas[2]:
             if resumo:
                 st.dataframe(pd.DataFrame(resumo), use_container_width=True)
             else:
-                st.info("Nenhum saldo pendente com os motoristas.")
+                st.info("Nenhum saldo pendente com os motoristas no momento.")
+        else:
+             st.info("Aguardando os primeiros lançamentos para gerar o relatório de saldos.")
                 
     else: # VISÃO DO LÍDER/MOTORISTA
         st.markdown("### 💰 Meu Saldo de Adiantamento")
-        if df_fin.empty:
-            st.info("Você ainda não tem movimentações.")
+        if df_fin.empty or 'Motorista' not in df_fin.columns:
+            st.info("Você ainda não tem movimentações registradas.")
         else:
             nome_usuario = st.session_state["nome_usuario"]
             nome_completo = next((nome for nome in LISTA_COLABORADORES if nome.split()[0].lower() == st.session_state["usuario_atual"]), None)
             
             if nome_completo:
                 df_meu = df_fin[df_fin['Motorista'] == nome_completo]
-                minhas_entradas = df_meu[df_meu['Tipo Movimento'] == 'Entrada (Adiantamento)']['Valor (R$)'].sum()
-                minhas_saidas = df_meu[df_meu['Tipo Movimento'] == 'Saída (Gasto)']['Valor (R$)'].sum()
+                
+                if 'Tipo Movimento' in df_fin.columns:
+                    minhas_entradas = df_meu[df_meu['Tipo Movimento'] == 'Entrada (Adiantamento)']['Valor (R$)'].sum()
+                    minhas_saidas = df_meu[df_meu['Tipo Movimento'] == 'Saída (Gasto)']['Valor (R$)'].sum()
+                else:
+                    minhas_entradas, minhas_saidas = 0, 0
+                    
                 meu_saldo = minhas_entradas - minhas_saidas
                 
                 cor = "green" if meu_saldo >= 0 else "red"
@@ -279,4 +294,10 @@ with abas[2]:
                 st.markdown("<p style='text-align: center;'>Valor que você ainda tem em mãos da empresa.</p>", unsafe_allow_html=True)
                 
                 st.write("**Meu Extrato:**")
-                st.dataframe(df_meu[['Data', 'Tipo Movimento', 'Valor (R$)']], use_container_width=True)
+                
+                if not df_meu.empty:
+                     # Se houver dados, mostra a tabelinha do motorista
+                     colunas_para_mostrar = [col for col in ['Data', 'Tipo Movimento', 'Valor (R$)'] if col in df_meu.columns]
+                     st.dataframe(df_meu[colunas_para_mostrar], use_container_width=True)
+                else:
+                     st.info("Nenhum extrato para exibir.")
