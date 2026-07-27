@@ -195,9 +195,10 @@ with abas[1]:
         else:
             with st.spinner("Salvando gasto..."):
                 obs = obs_gasto if obs_gasto.strip() else "-"
+                # MUDANÇA CRÍTICA: valor_gasto agora é enviado como NÚMERO, não como texto
                 linha = [
                     data_gasto.strftime("%d/%m/%Y"), mot_gasto, vei_gasto, 
-                    "Saída (Gasto)", tipo_gasto, str(valor_gasto).replace('.', ','), obs
+                    "Saída (Gasto)", tipo_gasto, float(valor_gasto), obs
                 ]
                 aba_financeiro.append_row(linha)
                 st.session_state["sucesso"] = True
@@ -206,18 +207,28 @@ with abas[1]:
 # ------------------------------------------
 # ABA 3: SALDOS E ADIANTAMENTOS
 # ------------------------------------------
+def blindagem_moeda(valor):
+    # Função para limpar qualquer sujeira que o Google Sheets mande de volta
+    if isinstance(valor, (int, float)): return float(valor)
+    v = str(valor).upper().replace('R$', '').strip()
+    if not v: return 0.0
+    if '.' in v and ',' in v: v = v.replace('.', '').replace(',', '.')
+    elif ',' in v: v = v.replace(',', '.')
+    try: return float(v)
+    except: return 0.0
+
 with abas[2]:
     with st.spinner("Calculando saldos da planilha..."):
         dados_fin = aba_financeiro.get_all_records()
         df_fin = pd.DataFrame(dados_fin)
     
-    # 🛡️ ARMADURA ANTIESPAÇO: Remove espaços invisíveis dos nomes das colunas
+    # 🛡️ ARMADURA ANTIESPAÇO
     if not df_fin.empty:
         df_fin.columns = df_fin.columns.str.strip()
     
-    # Limpeza dos dados de valor
+    # 🛡️ LIMPEZA DE MOEDA BLINDADA
     if not df_fin.empty and 'Valor (R$)' in df_fin.columns:
-        df_fin['Valor (R$)'] = df_fin['Valor (R$)'].astype(str).str.replace(',', '.').astype(float)
+        df_fin['Valor (R$)'] = df_fin['Valor (R$)'].apply(blindagem_moeda)
         
     if is_admin:
         st.markdown("### 💸 Lançar Novo Adiantamento (PIX)")
@@ -233,9 +244,10 @@ with abas[2]:
             elif valor_ad <= 0: st.error("Valor inválido.")
             else:
                 with st.spinner("Registrando envio..."):
+                    # MUDANÇA CRÍTICA: valor_ad agora é enviado como NÚMERO
                     linha = [
                         data_ad.strftime("%d/%m/%Y"), mot_ad, "-", 
-                        "Entrada (Adiantamento)", "PIX da Empresa", str(valor_ad).replace('.', ','), "Adiantamento"
+                        "Entrada (Adiantamento)", "PIX da Empresa", float(valor_ad), "Adiantamento"
                     ]
                     aba_financeiro.append_row(linha)
                     st.session_state["sucesso"] = True
@@ -247,13 +259,11 @@ with abas[2]:
         if not df_fin.empty and 'Motorista' in df_fin.columns:
             resumo = []
             for motorista in df_fin['Motorista'].unique():
-                # Ignora linhas em branco
                 if str(motorista).strip() == "": continue
                 
                 df_mot = df_fin[df_fin['Motorista'] == motorista]
                 
                 if 'Tipo Movimento' in df_fin.columns:
-                    # Somente Entradas exatas e Saídas exatas
                     entradas = df_mot[df_mot['Tipo Movimento'].str.strip() == 'Entrada (Adiantamento)']['Valor (R$)'].sum()
                     saidas = df_mot[df_mot['Tipo Movimento'].str.strip() == 'Saída (Gasto)']['Valor (R$)'].sum()
                 else:
@@ -261,7 +271,7 @@ with abas[2]:
                     
                 saldo = entradas - saidas
                 if saldo != 0: 
-                    resumo.append({"Motorista": motorista, "Saldo Atual": f"R$ {saldo:.2f}"})
+                    resumo.append({"Motorista": motorista, "Saldo Atual": f"R$ {saldo:.2f}".replace('.', ',')})
             
             if resumo:
                 st.dataframe(pd.DataFrame(resumo), use_container_width=True)
@@ -275,7 +285,6 @@ with abas[2]:
         if df_fin.empty or 'Motorista' not in df_fin.columns:
             st.info("Você ainda não tem movimentações registradas.")
         else:
-            # Encontra o nome completo dele para bater com a planilha
             nome_completo = next((nome for nome in LISTA_COLABORADORES if nome.split()[0].lower() == st.session_state["usuario_atual"]), None)
             
             if nome_completo:
@@ -290,13 +299,18 @@ with abas[2]:
                 meu_saldo = minhas_entradas - minhas_saidas
                 
                 cor = "green" if meu_saldo >= 0 else "red"
-                st.markdown(f"<h1 style='text-align: center; color: {cor};'>R$ {meu_saldo:.2f}</h1>", unsafe_allow_html=True)
+                st.markdown(f"<h1 style='text-align: center; color: {cor};'>R$ {meu_saldo:.2f}</h1>".replace('.', ','), unsafe_allow_html=True)
                 st.markdown("<p style='text-align: center;'>Valor que você ainda tem em mãos da empresa.</p>", unsafe_allow_html=True)
                 
                 st.write("**Meu Extrato:**")
                 
                 if not df_meu.empty:
                      colunas_para_mostrar = [col for col in ['Data', 'Tipo Movimento', 'Valor (R$)'] if col in df_meu.columns]
-                     st.dataframe(df_meu[colunas_para_mostrar], use_container_width=True)
+                     
+                     # Formata os valores do extrato para não ficarem feios na tela
+                     df_extrato = df_meu[colunas_para_mostrar].copy()
+                     df_extrato['Valor (R$)'] = df_extrato['Valor (R$)'].apply(lambda x: f"R$ {float(x):.2f}".replace('.', ','))
+                     
+                     st.dataframe(df_extrato, use_container_width=True)
                 else:
                      st.info("Nenhum extrato para exibir.")
