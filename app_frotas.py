@@ -7,12 +7,14 @@ from google.oauth2.service_account import Credentials
 import traceback
 import google.generativeai as genai
 from PIL import Image
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
+import io
 
-# Configuração da Página
 st.set_page_config(page_title="Gestão de Frotas - ITON", page_icon="🚗", layout="centered")
 
 # ==========================================
-# 1. SISTEMA DE LOGIN COM PERFIS
+# 1. LOGIN COM PERFIS
 # ==========================================
 USUARIOS = {
     "lucas": {"senha": "123", "nome": "Lucas Biazoto (Admin)", "papel": "admin"},
@@ -23,18 +25,13 @@ USUARIOS = {
 }
 
 def check_password():
-    if "logged_in" not in st.session_state:
-        st.session_state["logged_in"] = False
-
+    if "logged_in" not in st.session_state: st.session_state["logged_in"] = False
     if not st.session_state["logged_in"]:
         st.markdown("<h2 style='text-align: center;'>🚗 Frotas - ITON</h2>", unsafe_allow_html=True)
-        st.markdown("<p style='text-align: center;'>Faça o login para acessar o sistema.</p>", unsafe_allow_html=True)
-        
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             usuario = st.text_input("👤 Usuário (Primeiro nome)", key="login_user").lower().strip()
             senha = st.text_input("🔑 Senha", type="password", key="login_pass")
-            
             if st.button("Entrar no Sistema", use_container_width=True, type="primary"):
                 if usuario in USUARIOS and USUARIOS[usuario]["senha"] == senha:
                     st.session_state["logged_in"] = True
@@ -42,89 +39,67 @@ def check_password():
                     st.session_state["nome_usuario"] = USUARIOS[usuario]["nome"]
                     st.session_state["papel"] = USUARIOS[usuario]["papel"]
                     st.rerun()
-                else:
-                    st.error("Usuário ou senha incorretos.")
+                else: st.error("Usuário ou senha incorretos.")
         return False
     return True
 
-if not check_password():
-    st.stop()
+if not check_password(): st.stop()
 
 # ==========================================
-# 2. CONEXÕES (GOOGLE SHEETS E IA)
+# 2. CONEXÕES GERAIS
 # ==========================================
-# Conexão com o Google Sheets
+@st.cache_resource
 def conectar_google():
     try:
         credenciais_dict = json.loads(st.secrets["google_credentials"])
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(credenciais_dict, scopes=scopes)
         client = gspread.authorize(creds)
         
-        LINK_DA_PLANILHA = "https://docs.google.com/spreadsheets/d/1oI9pPGXngdE1jrOaQGIRhHMfLnt_Evh9tN_9lQkLaOU/edit?gid=1342849862#gid=1342849862"
-        documento = client.open_by_url(LINK_DA_PLANILHA)
-        
+        # Conexão com a planilha
+        documento = client.open_by_url("https://docs.google.com/spreadsheets/d/1oI9pPGXngdE1jrOaQGIRhHMfLnt_Evh9tN_9lQkLaOU/edit?gid=1342849862#gid=1342849862")
         aba_diario = documento.worksheet("DIARIO_FROTA")
         aba_financeiro = documento.worksheet("FINANCEIRO_FROTA")
         
-        return aba_diario, aba_financeiro
+        # Conexão com o Drive (para upload)
+        drive_service = build('drive', 'v3', credentials=creds)
+        
+        # COLOQUE O ID DA PASTA AQUI!!!
+        PASTA_ID = "1qgEiEr2sbpjOAqN0ZvJH64VhvFpEZ7TZ" 
+        
+        return aba_diario, aba_financeiro, drive_service, PASTA_ID
     except Exception as e:
-        st.error("🚨 Erro de conexão com a planilha.")
-        st.code(traceback.format_exc(), language="python")
+        st.error("🚨 Erro de conexão com o Google.")
         st.stop()
 
-# Conexão com a Inteligência Artificial
 def configurar_ia():
     try:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        # ATUALIZADO PARA O MODELO VIGENTE SUPORTADO PELA BIBLIOTECA
         model = genai.GenerativeModel('gemini-3.5-flash')
         return model
-    except Exception as e:
-        st.error("🚨 Erro de configuração da IA. Verifique sua chave API.")
-        return None
+    except: return None
 
-aba_diario, aba_financeiro = conectar_google()
+aba_diario, aba_financeiro, drive_service, PASTA_ID = conectar_google()
 modelo_ia = configurar_ia()
 
 # ==========================================
 # LISTAS BASE
 # ==========================================
-LISTA_VEICULOS = [
-    "Gol (Empresa)", 
-    "Livina - 7 Lugares (Empresa)", 
-    "Uno (Empresa)",
-    "Veículo Alugado (Localiza/Unidas)"
-]
-
-LISTA_COLABORADORES = [
-    "Danilo Alves de Oliveira", "Diego de Faria Santos", "Diego Sergio Simão", 
-    "Evane Jacinto Pacheco", "Flavio Mateus", "Francisco Damazio Moraes", 
-    "Hebert Deivison Silveira Pereira", "Jeferson Miranda do Cabo", 
-    "Jefferson Santos Nascimento", "Jonathan Araújo Mendonça", 
-    "Jorge Esbrisse Martins", "Kauai Darlei dos Santos Vieira", 
-    "Marco Aurelio Jesus da Costa", "Paulo Cesar de Souza", "Rafael Damaciano", 
-    "Robinson William dos Santos Machado", "Kauã Rodrigues Roza", "Niuleno Alves de Souza"
-]
+LISTA_VEICULOS = ["Gol (Empresa)", "Livina - 7 Lugares (Empresa)", "Uno (Empresa)", "Veículo Alugado (Localiza/Unidas)"]
+LISTA_COLABORADORES = ["Danilo Alves de Oliveira", "Diego de Faria Santos", "Diego Sergio Simão", "Evane Jacinto Pacheco", "Flavio Mateus", "Francisco Damazio Moraes", "Hebert Deivison Silveira Pereira", "Jeferson Miranda do Cabo", "Jefferson Santos Nascimento", "Jonathan Araújo Mendonça", "Jorge Esbrisse Martins", "Kauai Darlei dos Santos Vieira", "Marco Aurelio Jesus da Costa", "Paulo Cesar de Souza", "Rafael Damaciano", "Robinson William dos Santos Machado", "Kauã Rodrigues Roza", "Niuleno Alves de Souza"]
 LISTA_COLABORADORES.sort()
-
 if "sucesso" not in st.session_state: st.session_state["sucesso"] = False
 
 # ==========================================
-# 3. CABEÇALHO DO APLICATIVO
+# 3. CABEÇALHO
 # ==========================================
 col_titulo, col_user = st.columns([3, 1])
-with col_titulo:
-    st.markdown("<h2>🚗 Frota & Despesas</h2>", unsafe_allow_html=True)
+with col_titulo: st.markdown("<h2>🚗 Frota & Despesas</h2>", unsafe_allow_html=True)
 with col_user:
     st.write(f"👤 **{st.session_state['nome_usuario'].split()[0]}**")
     if st.button("Sair", use_container_width=True):
         st.session_state["logged_in"] = False
         st.rerun()
-
 st.divider()
 
 if st.session_state["sucesso"]:
@@ -135,48 +110,31 @@ if st.session_state["sucesso"]:
         st.rerun()
     st.stop()
 
-# ==========================================
-# DEFINIÇÃO DAS ABAS POR PERFIL
-# ==========================================
 is_admin = st.session_state["papel"] == "admin"
-
-if is_admin:
-    abas = st.tabs(["📋 Checklist", "💸 Registrar Gasto", "💰 Painel Admin (Saldos)"])
-else:
-    abas = st.tabs(["📋 Checklist", "💸 Registrar Gasto", "💰 Meu Saldo"])
+abas = st.tabs(["📋 Checklist", "💸 Registrar Gasto", "💰 Painel Admin (Saldos)"] if is_admin else ["📋 Checklist", "💸 Registrar Gasto", "💰 Meu Saldo"])
 
 # ------------------------------------------
 # ABA 1: CHECKLIST DIÁRIO
 # ------------------------------------------
 with abas[0]:
     st.markdown("**Vistoria Rápida (Antes de sair com o carro)**")
-    
     col_v1, col_v2 = st.columns(2)
     with col_v1:
         mot_chk = st.selectbox("👷 Motorista:", ["Selecione..."] + LISTA_COLABORADORES, key="chk_mot")
         vei_chk = st.selectbox("🚗 Veículo:", ["Selecione..."] + LISTA_VEICULOS, key="chk_vei")
     with col_v2:
         km_atual = st.number_input("📟 Hodômetro (KM do Painel):", min_value=0, step=1)
-        
-    st.markdown("**Inspeção:**")
+    
     col_i1, col_i2 = st.columns(2)
-    with col_i1:
-        luz_painel = st.radio("🚨 Luz de alerta no painel?", ["Não, tudo apagado", "Sim, tem luz acesa"])
-    with col_i2:
-        pneus = st.radio("🛞 Pneu murcho/danificado?", ["Não, estão OK", "Sim, avariado"])
+    with col_i1: luz_painel = st.radio("🚨 Luz de alerta no painel?", ["Não, tudo apagado", "Sim, tem luz acesa"])
+    with col_i2: pneus = st.radio("🛞 Pneu murcho/danificado?", ["Não, estão OK", "Sim, avariado"])
         
     foto_painel = st.file_uploader("📸 Foto do Painel (Obrigatório)", type=['png', 'jpg', 'jpeg'], key="foto_chk")
-    obs_chk = st.text_area("📝 Observações (Ex: Bateram no carro):", placeholder="Opcional...")
+    obs_chk = st.text_area("📝 Observações:", placeholder="Opcional...")
     
     if st.button("✅ Enviar Vistoria", type="primary", use_container_width=True):
-        if mot_chk == "Selecione...":
-            st.warning("⚠️ Selecione o Motorista.")
-        elif vei_chk == "Selecione...":
-            st.warning("⚠️ Selecione o Veículo.")
-        elif km_atual == 0:
-            st.warning("⚠️ Informe a Quilometragem (KM).")
-        elif not foto_painel:
-            st.warning("⚠️ Você precisa anexar a foto do painel mostrando o KM.")
+        if mot_chk == "Selecione..." or vei_chk == "Selecione..." or km_atual == 0 or not foto_painel:
+            st.error("⚠️ Preencha TODOS os campos e anexe a foto do painel para enviar.")
         else:
             with st.spinner("Salvando..."):
                 data_hora = datetime.now().strftime("%d/%m/%Y %H:%M")
@@ -186,11 +144,10 @@ with abas[0]:
                 st.rerun()
 
 # ------------------------------------------
-# ABA 2: REGISTRAR GASTO (COM IA)
+# ABA 2: REGISTRAR GASTO (COM IA E DRIVE)
 # ------------------------------------------
 with abas[1]:
     st.markdown("**Lançamento de Despesas do Veículo**")
-    
     col_g1, col_g2 = st.columns(2)
     with col_g1:
         data_gasto = st.date_input("📅 Data do Gasto:")
@@ -200,81 +157,46 @@ with abas[1]:
         tipo_gasto = st.selectbox("💳 Categoria:", ["Combustível", "Pedágio", "Manutenção", "Lava-rápido"])
         
     valor_gasto = st.number_input("💰 Valor Total Gasto (R$):", min_value=0.0, step=10.0, format="%.2f")
-    
-    foto_nota = st.file_uploader("📸 Foto da Nota Fiscal (Obrigatório para a IA analisar)", type=['png', 'jpg', 'jpeg'], key="foto_nota")
-
-    obs_gasto = st.text_area("📝 Observações (Nome do posto, etc):", placeholder="Opcional...")
+    foto_nota = st.file_uploader("📸 Foto da Nota (Obrigatório)", type=['png', 'jpg', 'jpeg'], key="foto_nota")
+    obs_gasto = st.text_area("📝 Observações (Opcional):", placeholder="Posto Ipiranga...")
     
     if st.button("✅ Salvar Despesa", type="primary", use_container_width=True):
-        if mot_gasto == "Selecione...":
-            st.warning("⚠️ Selecione quem gastou o dinheiro.")
-        elif vei_gasto == "Selecione...":
-            st.warning("⚠️ Selecione o veículo.")
-        elif valor_gasto <= 0:
-            st.warning("⚠️ O valor gasto deve ser maior que zero.")
-        elif not foto_nota:
-            st.warning("⚠️ A foto da nota fiscal é OBRIGATÓRIA.")
+        if mot_gasto == "Selecione..." or vei_gasto == "Selecione..." or valor_gasto <= 0 or not foto_nota:
+            st.error("⚠️ Preencha TODOS os campos e anexe a foto da nota fiscal.")
         else:
-            if modelo_ia is None:
-                st.error("A Inteligência Artificial não está configurada corretamente.")
-                st.stop()
-                
-            # PROCESSO DA INTELIGÊNCIA ARTIFICIAL
-            with st.spinner("🤖 A IA está lendo sua nota, aguarde..."):
+            with st.spinner("🤖 A IA está auditando a nota, aguarde..."):
                 try:
-                    # 1. Abre a imagem usando o PIL
                     imagem_aberta = Image.open(foto_nota)
-                    
-                    # 2. Cria o comando (prompt) para a IA
-                    comando_ia = f"""
-                    Você é um auditor financeiro. Analise a imagem desta nota fiscal ou recibo.
-                    O funcionário declarou no sistema que o valor TOTAL gasto foi de R$ {valor_gasto:.2f}.
-                    Sua tarefa é ler a nota fiscal e verificar se o valor total legível nela corresponde a este valor declarado.
-                    
-                    Responda estritamente neste formato:
-                    [STATUS] - [JUSTIFICATIVA]
-                    
-                    Onde [STATUS] deve ser EXATAMENTE 'APROVADO' (se os valores baterem) ou 'RECUSADO' (se não baterem ou não der para ler).
-                    
-                    Exemplo 1: APROVADO - O valor total da nota fiscal legível é R$ {valor_gasto:.2f}.
-                    Exemplo 2: RECUSADO - O valor total da nota é R$ 100,00, mas o usuário digitou R$ 150,00.
-                    Exemplo 3: RECUSADO - A imagem está muito borrada e não consigo identificar nenhum valor.
-                    """
-                    
-                    # 3. Manda para o modelo
+                    comando_ia = f"Leia esta nota fiscal. O valor total legível nela é exatamente R$ {valor_gasto:.2f}? Responda apenas 'APROVADO' se bater, ou 'RECUSADO - [motivo]' se não bater."
                     resposta_ia = modelo_ia.generate_content([comando_ia, imagem_aberta])
-                    texto_resposta = resposta_ia.text.strip()
+                    texto_resposta = resposta_ia.text.strip().upper()
                     
-                    # 4. Avalia a resposta
                     if texto_resposta.startswith("APROVADO"):
-                        st.success("✅ A Inteligência Artificial aprovou a nota fiscal!")
+                        st.success("✅ IA Aprovou! Enviando foto para o Drive...")
                         
-                        # SALVA NA PLANILHA (ENVIANDO EXATAMENTE OS 7 DADOS E FORMATANDO COMO FLOAT MATEMÁTICO)
+                        # UPLOAD PARA O DRIVE
+                        file_metadata = {'name': f"Nota_{mot_gasto.split()[0]}_{data_gasto.strftime('%d%m')}.jpg", 'parents': [PASTA_ID]}
+                        media = MediaIoBaseUpload(io.BytesIO(foto_nota.getvalue()), mimetype=foto_nota.type, resumable=True)
+                        arquivo = drive_service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
+                        drive_service.permissions().create(fileId=arquivo.get('id'), body={'type': 'anyone', 'role': 'reader'}).execute()
+                        link_nota = arquivo.get('webViewLink')
+                        
+                        # SALVA NA PLANILHA
                         obs = obs_gasto if obs_gasto.strip() else "-"
-                        linha = [
-                            data_gasto.strftime("%d/%m/%Y"), 
-                            mot_gasto, 
-                            vei_gasto, 
-                            "Saída (Gasto)", 
-                            tipo_gasto, 
-                            float(valor_gasto), 
-                            obs
-                        ]
+                        linha = [data_gasto.strftime("%d/%m/%Y"), mot_gasto, vei_gasto, "Saída (Gasto)", tipo_gasto, float(valor_gasto), obs, link_nota]
                         aba_financeiro.append_row(linha)
                         st.session_state["sucesso"] = True
                         st.rerun()
                     else:
                         st.error("🚨 A Inteligência Artificial RECUSOU este lançamento.")
                         st.warning(f"**Motivo:** {texto_resposta}")
-                        
                 except Exception as e:
-                    st.error("🚨 Erro ao processar com a IA. A API pode estar indisponível ou o formato da imagem não é suportado.")
+                    st.error("Erro na comunicação com a IA ou Drive. Verifique as chaves e o ID da pasta.")
                     st.code(str(e))
 
 # ------------------------------------------
 # ABA 3: SALDOS E ADIANTAMENTOS
 # ------------------------------------------
-# Blindagem contra espaços extras na planilha
 def blindagem_moeda(valor):
     if isinstance(valor, (int, float)): return float(valor)
     v = str(valor).upper().replace('R$', '').strip()
@@ -285,17 +207,13 @@ def blindagem_moeda(valor):
     except: return 0.0
 
 with abas[2]:
-    with st.spinner("Calculando saldos da planilha..."):
+    with st.spinner("Calculando saldos..."):
         dados_fin = aba_financeiro.get_all_records()
         df_fin = pd.DataFrame(dados_fin)
     
-    # Limpeza dos nomes das colunas (tira espaços extras que possam existir na planilha)
     if not df_fin.empty:
         df_fin.columns = df_fin.columns.str.strip()
-    
-    # Prepara os valores para o cálculo
-    if not df_fin.empty and 'Valor (R$)' in df_fin.columns:
-        df_fin['Valor (R$)'] = df_fin['Valor (R$)'].apply(blindagem_moeda)
+        if 'Valor (R$)' in df_fin.columns: df_fin['Valor (R$)'] = df_fin['Valor (R$)'].apply(blindagem_moeda)
         
     if is_admin:
         st.markdown("### 💸 Lançar Novo Adiantamento (PIX)")
@@ -307,79 +225,45 @@ with abas[2]:
             valor_ad = st.number_input("💰 Valor Enviado (R$):", min_value=0.0, step=50.0, format="%.2f")
             
         if st.button("✅ Registrar PIX Enviado", type="primary", use_container_width=True):
-            if mot_ad == "Selecione...": st.error("Selecione o motorista.")
-            elif valor_ad <= 0: st.error("Valor inválido.")
+            if mot_ad == "Selecione..." or valor_ad <= 0: st.error("Preencha corretamente.")
             else:
-                with st.spinner("Registrando envio..."):
-                    linha = [
-                        data_ad.strftime("%d/%m/%Y"), 
-                        mot_ad, 
-                        "-", 
-                        "Entrada (Adiantamento)", 
-                        "PIX da Empresa", 
-                        float(valor_ad), 
-                        "Adiantamento"
-                    ]
-                    aba_financeiro.append_row(linha)
-                    st.session_state["sucesso"] = True
-                    st.rerun()
+                linha = [data_ad.strftime("%d/%m/%Y"), mot_ad, "-", "Entrada (Adiantamento)", "PIX da Empresa", float(valor_ad), "Adiantamento", "-"]
+                aba_financeiro.append_row(linha)
+                st.session_state["sucesso"] = True
+                st.rerun()
                     
         st.divider()
-        st.markdown("### 📊 Visão Geral de Saldos (Toda a Equipe)")
-        
-        # Proteção extra: verifica se a planilha está vazia
+        st.markdown("### 📊 Visão Geral de Saldos")
         if not df_fin.empty and 'Motorista' in df_fin.columns:
             resumo = []
             for motorista in df_fin['Motorista'].unique():
                 if str(motorista).strip() == "": continue
                 df_mot = df_fin[df_fin['Motorista'] == motorista]
-                
-                # Somente soma se a coluna existir
-                if 'Tipo Movimento' in df_fin.columns:
-                    entradas = df_mot[df_mot['Tipo Movimento'].str.strip() == 'Entrada (Adiantamento)']['Valor (R$)'].sum()
-                    saidas = df_mot[df_mot['Tipo Movimento'].str.strip() == 'Saída (Gasto)']['Valor (R$)'].sum()
-                else:
-                    entradas, saidas = 0, 0
-                    
+                entradas = df_mot[df_mot['Tipo Movimento'].str.strip() == 'Entrada (Adiantamento)']['Valor (R$)'].sum() if 'Tipo Movimento' in df_fin.columns else 0
+                saidas = df_mot[df_mot['Tipo Movimento'].str.strip() == 'Saída (Gasto)']['Valor (R$)'].sum() if 'Tipo Movimento' in df_fin.columns else 0
                 saldo = entradas - saidas
-                if saldo != 0: 
-                    resumo.append({"Motorista": motorista, "Saldo Atual": f"R$ {saldo:.2f}".replace('.', ',')})
-            
-            if resumo:
-                st.dataframe(pd.DataFrame(resumo), use_container_width=True)
-            else:
-                st.info("Nenhum saldo pendente com os motoristas no momento.")
-        else:
-             st.info("Aguardando os primeiros lançamentos para gerar o relatório de saldos.")
+                if saldo != 0: resumo.append({"Motorista": motorista, "Saldo Atual": f"R$ {saldo:.2f}".replace('.', ',')})
+            if resumo: st.dataframe(pd.DataFrame(resumo), use_container_width=True)
+            else: st.info("Nenhum saldo pendente.")
+        else: st.info("Aguardando lançamentos...")
                 
-    else: # VISÃO DO LÍDER/MOTORISTA
+    else: 
         st.markdown("### 💰 Meu Saldo de Adiantamento")
         if df_fin.empty or 'Motorista' not in df_fin.columns:
-            st.info("Você ainda não tem movimentações registradas.")
+            st.info("Você ainda não tem movimentações.")
         else:
             nome_completo = next((nome for nome in LISTA_COLABORADORES if nome.split()[0].lower() == st.session_state["usuario_atual"]), None)
-            
             if nome_completo:
                 df_meu = df_fin[df_fin['Motorista'] == nome_completo]
-                
-                if 'Tipo Movimento' in df_fin.columns:
-                    minhas_entradas = df_meu[df_meu['Tipo Movimento'].str.strip() == 'Entrada (Adiantamento)']['Valor (R$)'].sum()
-                    minhas_saidas = df_meu[df_meu['Tipo Movimento'].str.strip() == 'Saída (Gasto)']['Valor (R$)'].sum()
-                else:
-                    minhas_entradas, minhas_saidas = 0, 0
-                    
+                minhas_entradas = df_meu[df_meu['Tipo Movimento'].str.strip() == 'Entrada (Adiantamento)']['Valor (R$)'].sum() if 'Tipo Movimento' in df_fin.columns else 0
+                minhas_saidas = df_meu[df_meu['Tipo Movimento'].str.strip() == 'Saída (Gasto)']['Valor (R$)'].sum() if 'Tipo Movimento' in df_fin.columns else 0
                 meu_saldo = minhas_entradas - minhas_saidas
-                
                 cor = "green" if meu_saldo >= 0 else "red"
                 st.markdown(f"<h1 style='text-align: center; color: {cor};'>R$ {meu_saldo:.2f}</h1>".replace('.', ','), unsafe_allow_html=True)
-                st.markdown("<p style='text-align: center;'>Valor que você ainda tem em mãos da empresa.</p>", unsafe_allow_html=True)
                 
                 st.write("**Meu Extrato:**")
-                
                 if not df_meu.empty:
                      colunas_para_mostrar = [col for col in ['Data', 'Tipo Movimento', 'Valor (R$)'] if col in df_meu.columns]
                      df_extrato = df_meu[colunas_para_mostrar].copy()
                      df_extrato['Valor (R$)'] = df_extrato['Valor (R$)'].apply(lambda x: f"R$ {float(x):.2f}".replace('.', ','))
                      st.dataframe(df_extrato, use_container_width=True)
-                else:
-                     st.info("Nenhum extrato para exibir.")
