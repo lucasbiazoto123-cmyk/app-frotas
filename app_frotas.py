@@ -75,7 +75,8 @@ def conectar_google():
 def configurar_ia():
     try:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        model = genai.GenerativeModel('gemini-3.5-flash')
+        # Changed to gemini-3.5-flash-lite to get 15 RPM instead of 5 RPM on the free tier
+        model = genai.GenerativeModel('gemini-3.5-flash-lite')
         return model
     except Exception as e:
         st.error("🚨 Erro de configuração da IA.")
