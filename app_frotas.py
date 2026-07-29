@@ -4,12 +4,11 @@ from datetime import datetime
 import json
 import gspread
 from google.oauth2.service_account import Credentials
-import traceback
 import google.generativeai as genai
 from PIL import Image
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
 import io
+import requests
+import base64
 
 st.set_page_config(page_title="Gestão de Frotas - ITON", page_icon="🚗", layout="centered")
 
@@ -46,7 +45,7 @@ def check_password():
 if not check_password(): st.stop()
 
 # ==========================================
-# 2. CONEXÕES GERAIS E IA
+# 2. CONEXÕES (SHEETS E IA)
 # ==========================================
 @st.cache_resource
 def conectar_google():
@@ -56,33 +55,27 @@ def conectar_google():
         creds = Credentials.from_service_account_info(credenciais_dict, scopes=scopes)
         client = gspread.authorize(creds)
         
-        # Conexão com a planilha (usando o link direto)
+        # Conexão com as planilhas
         documento = client.open_by_url("https://docs.google.com/spreadsheets/d/1oI9pPGXngdE1jrOaQGIRhHMfLnt_Evh9tN_9lQkLaOU/edit?gid=1342849862#gid=1342849862")
         aba_diario = documento.worksheet("DIARIO_FROTA")
         aba_financeiro = documento.worksheet("FINANCEIRO_FROTA")
         
-        # Conexão Drive
-        drive_service = build('drive', 'v3', credentials=creds)
-        
-        # COLOQUE O SEU ID AQUI NOVAMENTE!
-        PASTA_ID = "1qgEiEr2sbpjOAqN0ZvJH64VhvFpEZ7TZ" 
-        
-        return aba_diario, aba_financeiro, drive_service, PASTA_ID
+        return aba_diario, aba_financeiro
     except Exception as e:
-        st.error("🚨 Erro de conexão com o Google Sheets ou Drive.")
+        st.error("🚨 Erro de conexão com o Google Sheets.")
         st.stop()
 
 def configurar_ia():
     try:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        # Changed to gemini-3.5-flash-lite to get 15 RPM instead of 5 RPM on the free tier
+        # Retornamos para o modelo LITE para ter mais requisições gratuitas (15 por minuto)
         model = genai.GenerativeModel('gemini-3.5-flash-lite')
         return model
     except Exception as e:
-        st.error("🚨 Erro de configuração da IA.")
+        st.error("🚨 Erro de conexão com a Inteligência Artificial.")
         return None
 
-aba_diario, aba_financeiro, drive_service, PASTA_ID = conectar_google()
+aba_diario, aba_financeiro = conectar_google()
 modelo_ia = configurar_ia()
 
 # ==========================================
@@ -95,7 +88,7 @@ LISTA_COLABORADORES.sort()
 if "sucesso" not in st.session_state: st.session_state["sucesso"] = False
 
 # ==========================================
-# 3. CABEÇALHO
+# 3. CABEÇALHO E NAVEGAÇÃO
 # ==========================================
 col_titulo, col_user = st.columns([3, 1])
 with col_titulo: st.markdown("<h2>🚗 Frota & Despesas</h2>", unsafe_allow_html=True)
@@ -148,7 +141,7 @@ with abas[0]:
                 st.rerun()
 
 # ------------------------------------------
-# ABA 2: REGISTRAR GASTO (IA + COMPRESSÃO + DRIVE)
+# ABA 2: REGISTRAR GASTO (IA + IMGBB)
 # ------------------------------------------
 with abas[1]:
     st.markdown("**Lançamento de Despesas do Veículo**")
@@ -161,7 +154,7 @@ with abas[1]:
         tipo_gasto = st.selectbox("💳 Categoria:", ["Combustível", "Pedágio", "Manutenção", "Lava-rápido"])
         
     valor_gasto = st.number_input("💰 Valor Total Gasto (R$):", min_value=0.0, step=10.0, format="%.2f")
-    foto_nota = st.file_uploader("📸 Foto da Nota Fiscal (Obrigatório para a IA analisar)", type=['png', 'jpg', 'jpeg'], key="foto_nota")
+    foto_nota = st.file_uploader("📸 Foto da Nota Fiscal (Obrigatório)", type=['png', 'jpg', 'jpeg'], key="foto_nota")
     obs_gasto = st.text_area("📝 Observações (Nome do posto, etc):", placeholder="Opcional...")
     
     if st.button("✅ Salvar Despesa", type="primary", use_container_width=True):
@@ -174,37 +167,36 @@ with abas[1]:
         else:
             with st.spinner("🤖 A IA está auditando a nota fiscal, aguarde..."):
                 try:
-                    # 1. ABRIR E COMPRIMIR A FOTO PARA NÃO TRAVAR O SISTEMA
+                    # 1. ABRIR E COMPRIMIR A FOTO (REDUZ PESO PARA NÃO TRAVAR A IA)
                     imagem_aberta = Image.open(foto_nota)
-                    # Força a conversão para RGB (evita erros em PNGs transparentes)
                     if imagem_aberta.mode != 'RGB':
                         imagem_aberta = imagem_aberta.convert('RGB')
-                    # Reduz o tamanho máximo (deixa a foto bem leve, tamanho de Zap)
                     imagem_aberta.thumbnail((800, 800))
                     
-                    # 2. ENVIAR PARA A IA
+                    # 2. IA ANALISA A FOTO
                     comando_ia = f"Leia esta nota fiscal. O valor total legível nela é exatamente R$ {valor_gasto:.2f}? Responda apenas 'APROVADO' se bater, ou 'RECUSADO - [motivo]' se não bater ou não estiver legível."
                     resposta_ia = modelo_ia.generate_content([comando_ia, imagem_aberta])
                     texto_resposta = resposta_ia.text.strip().upper()
                     
                     if texto_resposta.startswith("APROVADO"):
-                        st.success("✅ IA Aprovou o valor! Enviando foto para o Drive...")
+                        st.success("✅ IA Aprovou o valor! Enviando comprovante para a nuvem...")
                         
-                        # 3. SALVAR FOTO COMPRIMIDA NO DRIVE
+                        # 3. ENVIAR FOTO PARA O IMGBB (Nuvem de imagens)
                         img_byte_arr = io.BytesIO()
-                        imagem_aberta.save(img_byte_arr, format='JPEG', quality=85)
-                        img_byte_arr.seek(0)
+                        imagem_aberta.save(img_byte_arr, format='JPEG', quality=80)
+                        encoded_image = base64.b64encode(img_byte_arr.getvalue()).decode('utf-8')
                         
-                        nome_arquivo = f"Nota_{mot_gasto.split()[0]}_{data_gasto.strftime('%d%m%Y_%H%M')}.jpg"
-                        file_metadata = {'name': nome_arquivo, 'parents': [PASTA_ID]}
-                        media = MediaIoBaseUpload(img_byte_arr, mimetype='image/jpeg', resumable=True)
+                        url_imgbb = "https://api.imgbb.com/1/upload"
+                        payload = {
+                            "key": st.secrets["IMGBB_API_KEY"],
+                            "image": encoded_image
+                        }
+                        resposta_imgbb = requests.post(url_imgbb, data=payload)
+                        link_nota = resposta_imgbb.json()["data"]["url"]
                         
-                        arquivo = drive_service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
-                        drive_service.permissions().create(fileId=arquivo.get('id'), body={'type': 'anyone', 'role': 'reader'}).execute()
-                        link_nota = arquivo.get('webViewLink')
-                        
-                        # 4. SALVAR NA PLANILHA COM O LINK
+                        # 4. SALVAR NA PLANILHA GOOGLE
                         obs_final = obs_gasto if obs_gasto.strip() else "-"
+                        
                         linha = [
                             data_gasto.strftime("%d/%m/%Y"), 
                             mot_gasto, 
@@ -213,7 +205,7 @@ with abas[1]:
                             tipo_gasto, 
                             float(valor_gasto), 
                             obs_final,
-                            link_nota  # O link cai na coluna H
+                            link_nota  # Link cai na coluna H
                         ]
                         aba_financeiro.append_row(linha)
                         st.session_state["sucesso"] = True
@@ -222,7 +214,7 @@ with abas[1]:
                         st.error("🚨 A Inteligência Artificial RECUSOU este lançamento.")
                         st.warning(f"**Motivo:** {texto_resposta}")
                 except Exception as e:
-                    st.error("Erro na comunicação com a IA ou Drive. Verifique as configurações e tente novamente.")
+                    st.error("Erro na comunicação com a IA ou envio da imagem.")
                     st.code(str(e))
 
 # ------------------------------------------
@@ -262,6 +254,7 @@ with abas[2]:
             if mot_ad == "Selecione..." or valor_ad <= 0: 
                 st.error("Preencha o motorista e o valor corretamente.")
             else:
+                # Agora são 8 colunas para bater com a planilha (a última vazia para o link da foto)
                 linha = [data_ad.strftime("%d/%m/%Y"), mot_ad, "-", "Entrada (Adiantamento)", "PIX da Empresa", float(valor_ad), "Adiantamento", "-"]
                 aba_financeiro.append_row(linha)
                 st.session_state["sucesso"] = True
